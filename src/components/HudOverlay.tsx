@@ -138,7 +138,7 @@ export function HudOverlay({
             <button type="button" onClick={() => onNudge(420, 0)} aria-label="Pan East">E</button>
             <button type="button" onClick={() => onNudge(0, 420)} aria-label="Pan South">S</button>
           </div>
-          <span className="hud-whisper">scroll or drag in 360°</span>
+          <span className="hud-whisper">move cursor to drift in 360°</span>
         </div>
       </footer>
     </div>

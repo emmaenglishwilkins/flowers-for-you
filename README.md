@@ -5,7 +5,7 @@ A one-page, 360-degree boundless spatial portfolio crafted with tactile black-wo
 ## Features
 
 - **Seamless 360° Toroidal Canvas**: Pan and scroll endlessly in every direction (horizontal, vertical, diagonal) with smooth `requestAnimationFrame` inertia/momentum physics and zero seams or dead ends.
-- **Multi-Modal Navigation**: Supports 2D trackpad scroll, mouse wheel, click-and-drag panning, touch drag, arrow keys, a live 360° bearing compass, and an interactive Toroidal Index & Mini-Map drawer.
+- **Smooth Mouse-Position Navigation**: Effortless, zero-click 360° camera drift guided organically by cursor placement across the viewport (with a calm center sanctuary and hover poise over flowers), plus 2D trackpad and scroll-wheel support, a live 360° bearing compass, and an interactive Toroidal Index & Mini-Map drawer.
 - **Theatrical Spotlight Scroll Visualizer**: A dynamic follow-spot beam responds organically to scroll velocity, heading direction, and cursor position—revealing crisp charcoal-on-rag-paper black-work details inside the beam while the surrounding field softly recedes into moody silhouetted stage linework. Includes a quick **Work Light** toggle (`L` key or HUD button) for full-canvas inspection.
 - **Bespoke Black-Work Artwork**: Hand-plotted organic SVG/Canvas floral markers, dry-brush ink filters, paper grain, and 8 art-directed monochrome production plates with zero external image dependencies.
 - **Single-File Content Editing**: Swap in your real bio, contact details, and case studies in one cleanly typed file (`src/data/portfolio.ts`).

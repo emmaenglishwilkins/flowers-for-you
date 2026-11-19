@@ -1,6 +1,5 @@
 import {
   DECORATIVE_BLOOMS,
-  PROJECTS,
   WORLD_HEIGHT,
   WORLD_WIDTH,
   type DecorativeBloom
@@ -42,21 +41,6 @@ const DUST_MOTES: DustMote[] = Array.from({ length: 22 }, (_, i) => {
     driftY: -5 - r3 * 9
   };
 });
-
-/** Organic botanical vine connections weaving gently between origin and projects */
-const STEM_CONNECTIONS: Array<[number, number, number, number, number]> = [
-  ...PROJECTS.map((p, idx): [number, number, number, number, number] => [
-    0,
-    0,
-    p.x,
-    p.y,
-    (idx % 2 === 0 ? 1 : -1) * (88 + (idx % 3) * 32)
-  ]),
-  ...PROJECTS.map((p, idx): [number, number, number, number, number] => {
-    const next = PROJECTS[(idx + 1) % PROJECTS.length];
-    return [p.x, p.y, next.x, next.y, (idx % 2 === 0 ? -1 : 1) * 115];
-  })
-];
 
 let paperGrainPattern: CanvasPattern | null = null;
 let duskGrainPattern: CanvasPattern | null = null;
@@ -345,65 +329,6 @@ export function renderFieldCanvas(
 
   const halfW = width * 0.5;
   const halfH = height * 0.5;
-
-  // Delicate, barely-there compass orbit arcs around Origin (0, 0)
-  const originDx = wrapDelta(0, camX, WORLD_WIDTH);
-  const originDy = wrapDelta(0, camY, WORLD_HEIGHT);
-  const originSx = halfW + originDx;
-  const originSy = halfH + originDy;
-
-  const rings = [440, 840, 1200];
-  ctx.save();
-  ctx.setLineDash([4, 10]);
-  ctx.strokeStyle = isAmbientShade ? 'rgba(232, 226, 210, 0.07)' : 'rgba(15, 15, 14, 0.11)';
-  ctx.lineWidth = 1;
-  for (const r of rings) {
-    ctx.beginPath();
-    ctx.arc(originSx, originSy, r, 0, Math.PI * 2);
-    ctx.stroke();
-  }
-  ctx.setLineDash([]);
-  ctx.restore();
-
-  // Organic connecting botanical ink stems weaving across the 360° torus
-  for (const [x1, y1, x2, y2, bend] of STEM_CONNECTIONS) {
-    const dx1 = wrapDelta(x1, camX, WORLD_WIDTH);
-    const dy1 = wrapDelta(y1, camY, WORLD_HEIGHT);
-    const segDx = wrapDelta(x2, x1, WORLD_WIDTH);
-    const segDy = wrapDelta(y2, y1, WORLD_HEIGHT);
-
-    const shifts = [
-      [0, 0],
-      [segDx > 0 ? -WORLD_WIDTH : WORLD_WIDTH, 0],
-      [0, segDy > 0 ? -WORLD_HEIGHT : WORLD_HEIGHT]
-    ];
-
-    for (const [ox, oy] of shifts) {
-      const sx1 = halfW + dx1 + ox;
-      const sy1 = halfH + dy1 + oy;
-      const sx2 = sx1 + segDx;
-      const sy2 = sy1 + segDy;
-
-      const minX = Math.min(sx1, sx2) - 160;
-      const maxX = Math.max(sx1, sx2) + 160;
-      const minY = Math.min(sy1, sy2) - 160;
-      const maxY = Math.max(sy1, sy2) + 160;
-      if (maxX < 0 || minX > width || maxY < 0 || minY > height) continue;
-
-      const len = Math.hypot(segDx, segDy) || 1;
-      const nx = -segDy / len;
-      const ny = segDx / len;
-      const cx = (sx1 + sx2) * 0.5 + nx * bend;
-      const cy = (sy1 + sy2) * 0.5 + ny * bend;
-
-      ctx.beginPath();
-      ctx.moveTo(sx1, sy1);
-      ctx.quadraticCurveTo(cx, cy, sx2, sy2);
-      ctx.strokeStyle = isAmbientShade ? 'rgba(232, 226, 210, 0.16)' : 'rgba(15, 15, 14, 0.22)';
-      ctx.lineWidth = isAmbientShade ? 1.15 : 1.85;
-      ctx.stroke();
-    }
-  }
 
   // Sculptural charcoal flowers distributed organically across the 360° torus
   for (const bloom of DECORATIVE_BLOOMS) {

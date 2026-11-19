@@ -188,9 +188,8 @@ export function HeroTwinFlowersPlinth() {
         viewBox="248 0 392 480"
         aria-hidden="true"
       >
-        {/* Subtle fine-pen sketchbook cross-hatching & compass arc */}
+        {/* Subtle fine-pen sketchbook cross-hatching */}
         <g opacity="0.16" stroke="#141412" strokeWidth="0.9" fill="none">
-          <circle cx="430" cy="196" r="158" strokeDasharray="3 6" />
           <path d="M320 48 L368 18 M342 56 L388 26 M366 62 L408 36" />
         </g>
 

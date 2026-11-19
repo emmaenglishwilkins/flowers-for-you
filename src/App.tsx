@@ -29,21 +29,24 @@ export default function App() {
   const [bloomingId, setBloomingId] = useState<string | null>(null);
   const [hoveredProjectId, setHoveredProjectId] = useState<string | null>(null);
 
-  // Mutable simulation state kept outside React for locked 60fps toroidal physics
+  // Mutable simulation state kept outside React for locked 60fps+ toroidal physics
   const simRef = useRef({
     camX: 0,
     camY: 0,
     vx: 0,
     vy: 0,
+    mouseVx: 0,
+    mouseVy: 0,
+    wheelVx: 0,
+    wheelVy: 0,
+    smNormX: 0,
+    smNormY: 0,
     bearing: 0,
     glide: null as GlideTarget | null,
-    isDragging: false,
-    dragMoved: false,
-    lastPointerX: 0,
-    lastPointerY: 0,
     pointerX: 0,
     pointerY: 0,
     pointerActive: false,
+    pointerRestAnchor: null as { x: number; y: number } | null,
     spotX: 0,
     spotY: 0,
     spotRadius: 365,
@@ -51,9 +54,8 @@ export default function App() {
     spotVy: 0,
     motionAngle: 0,
     workLightMix: 0,
-    keys: new Set<string>(),
     trail: [] as Array<{ x: number; y: number; alpha: number; r: number }>,
-    lastTelemetryAt: 0,
+    lastFrameMs: 0,
     lastTrailAt: 0,
     viewportW: typeof window !== 'undefined' ? window.innerWidth : 1440,
     viewportH: typeof window !== 'undefined' ? window.innerHeight : 900
@@ -61,20 +63,32 @@ export default function App() {
 
   // Sync latest React state flags into refs readable from the rAF loop
   const workLightRef = useRef(workLight);
-  workLightRef.current = workLight;
-
   const hoveredRef = useRef(hoveredProjectId);
-  hoveredRef.current = hoveredProjectId;
+
+  useEffect(() => {
+    workLightRef.current = workLight;
+  }, [workLight]);
+
+  useEffect(() => {
+    hoveredRef.current = hoveredProjectId;
+  }, [hoveredProjectId]);
 
   const glideTo = useCallback((x: number, y: number) => {
-    simRef.current.glide = { x, y };
-    simRef.current.vx *= 0.25;
-    simRef.current.vy *= 0.25;
+    const sim = simRef.current;
+    sim.glide = { x, y };
+    sim.mouseVx = 0;
+    sim.mouseVy = 0;
+    sim.wheelVx = 0;
+    sim.wheelVy = 0;
+    sim.smNormX = 0;
+    sim.smNormY = 0;
+    if (sim.pointerActive) {
+      sim.pointerRestAnchor = { x: sim.pointerX, y: sim.pointerY };
+    }
   }, []);
 
   // The flower is the project. Bloom it in place — the gallery comes later.
   const handleSelectProject = useCallback((project: PortfolioProject) => {
-    if (simRef.current.dragMoved) return;
     setBloomingId(project.id);
     glideTo(project.x, project.y);
   }, [glideTo]);
@@ -110,140 +124,176 @@ export default function App() {
     return () => window.removeEventListener('resize', syncSize);
   }, []);
 
-  // Wheel (2D trackpad + mouse wheel) & Keyboard 360° controls
+  // Wheel (2D trackpad + mouse wheel), Work Light key, and viewport leave safety
   useEffect(() => {
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      simRef.current.glide = null;
+      const sim = simRef.current;
+      sim.glide = null;
+      sim.pointerRestAnchor = null;
       const scale = e.deltaMode === 1 ? 26 : e.deltaMode === 2 ? 220 : 1;
-      simRef.current.vx += (e.deltaX * scale) * 0.14;
-      simRef.current.vy += (e.deltaY * scale) * 0.14;
+      sim.wheelVx += (e.deltaX * scale) * 0.12;
+      sim.wheelVy += (e.deltaY * scale) * 0.12;
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
-      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
-        e.preventDefault();
-        simRef.current.glide = null;
-        simRef.current.keys.add(e.key);
-      } else if (e.key === 'l' || e.key === 'L') {
+      if (e.key === 'l' || e.key === 'L') {
         setWorkLight((v) => !v);
-      } else if (e.key === 'Home' || e.key === '0') {
-        glideTo(0, 0);
       }
     };
 
-    const onKeyUp = (e: KeyboardEvent) => {
-      simRef.current.keys.delete(e.key);
+    const deactivatePointer = () => {
+      simRef.current.pointerActive = false;
     };
 
     window.addEventListener('wheel', onWheel, { passive: false });
     window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', deactivatePointer);
+    document.documentElement.addEventListener('mouseleave', deactivatePointer);
     return () => {
       window.removeEventListener('wheel', onWheel);
       window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', deactivatePointer);
+      document.documentElement.removeEventListener('mouseleave', deactivatePointer);
     };
-  }, [glideTo]);
+  }, []);
 
-  // Unified 60fps physics, toroidal DOM wrapping, spotlight mask & canvas loop
+  // Unified frame-rate-independent physics, toroidal DOM wrapping, spotlight mask & canvas loop
   useEffect(() => {
     let rafId = 0;
 
     const tick = (nowMs: number) => {
       const sim = simRef.current;
+      const rawDt = sim.lastFrameMs > 0 ? nowMs - sim.lastFrameMs : 16.6667;
+      sim.lastFrameMs = nowMs;
+      const dtScale = Math.min(2.5, Math.max(0.25, rawDt / 16.6667));
+      const smoothFactor = (alpha60: number) => 1 - Math.pow(1 - alpha60, dtScale);
+
       const w = sim.viewportW;
       const h = sim.viewportH;
       const halfW = w * 0.5;
       const halfH = h * 0.5;
 
-      // 1. Keyboard 360° steering acceleration
-      const accel = 2.35;
-      if (sim.keys.has('ArrowLeft')) sim.vx -= accel;
-      if (sim.keys.has('ArrowRight')) sim.vx += accel;
-      if (sim.keys.has('ArrowUp')) sim.vy -= accel;
-      if (sim.keys.has('ArrowDown')) sim.vy += accel;
+      // 1. Mouse-position-driven 360° steering (two-stage damped S-curve, zero click-and-drag)
+      const steeringActive = sim.pointerActive && !sim.glide && !sim.pointerRestAnchor;
+      const rawNx = steeringActive ? (sim.pointerX - halfW) / Math.max(1, halfW) : 0;
+      const rawNy = steeringActive ? (sim.pointerY - halfH) / Math.max(1, halfH) : 0;
 
-      // 2. Smooth shortest-path toroidal glide if active
+      const inputAlpha = smoothFactor(0.14);
+      sim.smNormX += (rawNx - sim.smNormX) * inputAlpha;
+      sim.smNormY += (rawNy - sim.smNormY) * inputAlpha;
+
+      const mag = Math.hypot(sim.smNormX, sim.smNormY);
+      const deadZone = 0.14;
+      let targetMouseVx = 0;
+      let targetMouseVy = 0;
+
+      if (mag > deadZone && !sim.glide && !sim.pointerRestAnchor) {
+        const clampedMag = Math.min(1, mag);
+        const t = (clampedMag - deadZone) / (1 - deadZone);
+        // Progressive ease: calm sanctuary near center, silky cruise toward outer viewport
+        const drive = t * t * (0.35 + 0.65 * t);
+        // Poise over flowers on hover so selecting a bloom feels effortless
+        const hoverPoise = hoveredRef.current ? 0.2 : 1;
+        const maxCruiseSpeed = 11.5;
+        const speedMag = drive * maxCruiseSpeed * hoverPoise;
+        targetMouseVx = (sim.smNormX / mag) * speedMag;
+        targetMouseVy = (sim.smNormY / mag) * speedMag;
+      }
+
+      const velAlpha = smoothFactor(0.075);
+      sim.mouseVx += (targetMouseVx - sim.mouseVx) * velAlpha;
+      sim.mouseVy += (targetMouseVy - sim.mouseVy) * velAlpha;
+      if (Math.abs(sim.mouseVx) < 0.006 && targetMouseVx === 0) sim.mouseVx = 0;
+      if (Math.abs(sim.mouseVy) < 0.006 && targetMouseVy === 0) sim.mouseVy = 0;
+
+      // 2. Smooth 2D trackpad / scroll wheel inertia
+      const wheelDecay = Math.pow(0.915, dtScale);
+      sim.wheelVx *= wheelDecay;
+      sim.wheelVy *= wheelDecay;
+      if (Math.abs(sim.wheelVx) < 0.01) sim.wheelVx = 0;
+      if (Math.abs(sim.wheelVy) < 0.01) sim.wheelVy = 0;
+
+      // 3. Shortest-path toroidal glide (when centering a bloomed flower) or combined cruise
       if (sim.glide) {
         const dx = wrapDelta(sim.glide.x, sim.camX, WORLD_WIDTH);
         const dy = wrapDelta(sim.glide.y, sim.camY, WORLD_HEIGHT);
         const dist = Math.hypot(dx, dy);
 
-        if (dist < 4) {
+        if (dist < 0.6) {
           sim.camX = wrapCoord(sim.glide.x, WORLD_WIDTH);
           sim.camY = wrapCoord(sim.glide.y, WORLD_HEIGHT);
           sim.vx = 0;
           sim.vy = 0;
           sim.glide = null;
         } else {
-          sim.vx = dx * 0.095;
-          sim.vy = dy * 0.095;
+          const glideStep = smoothFactor(0.085);
+          sim.vx = (dx * glideStep) / dtScale;
+          sim.vy = (dy * glideStep) / dtScale;
         }
+      } else {
+        sim.vx = sim.mouseVx + sim.wheelVx;
+        sim.vy = sim.mouseVy + sim.wheelVy;
       }
 
-      // 3. Apply velocity & organic inertia damping
-      const maxSpeed = 62;
+      const maxSpeed = 48;
       const rawSpeed = Math.hypot(sim.vx, sim.vy);
       if (rawSpeed > maxSpeed) {
         sim.vx = (sim.vx / rawSpeed) * maxSpeed;
         sim.vy = (sim.vy / rawSpeed) * maxSpeed;
       }
 
-      sim.camX = wrapCoord(sim.camX + sim.vx, WORLD_WIDTH);
-      sim.camY = wrapCoord(sim.camY + sim.vy, WORLD_HEIGHT);
-
-      if (!sim.isDragging && !sim.glide) {
-        sim.vx *= 0.915;
-        sim.vy *= 0.915;
-        if (Math.abs(sim.vx) < 0.025) sim.vx = 0;
-        if (Math.abs(sim.vy) < 0.025) sim.vy = 0;
-      }
+      sim.camX = wrapCoord(sim.camX + sim.vx * dtScale, WORLD_WIDTH);
+      sim.camY = wrapCoord(sim.camY + sim.vy * dtScale, WORLD_HEIGHT);
 
       const speed = Math.hypot(sim.vx, sim.vy);
-      if (speed > 0.35) {
+      if (speed > 0.25) {
         sim.bearing = bearingDegrees(sim.vx, sim.vy);
         sim.motionAngle = Math.atan2(sim.vy, sim.vx);
       }
 
-      // 4. Spotlight physics: responds to cursor + scroll velocity + direction bloom!
+      // 4. Spotlight physics: responds to cursor + travel velocity + direction bloom
       const targetWorkMix = workLightRef.current ? 1 : 0;
-      sim.workLightMix += (targetWorkMix - sim.workLightMix) * 0.12;
+      sim.workLightMix += (targetWorkMix - sim.workLightMix) * smoothFactor(0.12);
 
       // Magnetize follow-spot between viewport center and pointer, plus lead ahead along travel velocity
-      const cursorPull = sim.pointerActive ? 0.42 : 0;
+      const cursorPull = sim.pointerActive ? 0.36 : 0;
       const baseX = halfW + (sim.pointerX - halfW) * cursorPull;
       const baseY = halfH + (sim.pointerY - halfH) * cursorPull;
 
-      const leadX = Math.max(-165, Math.min(165, sim.vx * 3.8));
-      const leadY = Math.max(-145, Math.min(145, sim.vy * 3.8));
+      const leadX = Math.max(-150, Math.min(150, sim.vx * 3.2));
+      const leadY = Math.max(-135, Math.min(135, sim.vy * 3.2));
 
       const targetSpotX = Math.max(90, Math.min(w - 90, baseX + leadX));
       const targetSpotY = Math.max(90, Math.min(h - 90, baseY + leadY));
 
-      sim.spotX += (targetSpotX - sim.spotX) * 0.14;
-      sim.spotY += (targetSpotY - sim.spotY) * 0.14;
-      sim.spotVx += (sim.vx - sim.spotVx) * 0.18;
-      sim.spotVy += (sim.vy - sim.spotVy) * 0.18;
+      const spotLerp = smoothFactor(0.11);
+      const spotVelLerp = smoothFactor(0.16);
+      sim.spotX += (targetSpotX - sim.spotX) * spotLerp;
+      sim.spotY += (targetSpotY - sim.spotY) * spotLerp;
+      sim.spotVx += (sim.vx - sim.spotVx) * spotVelLerp;
+      sim.spotVy += (sim.vy - sim.spotVy) * spotVelLerp;
 
       const baseRadius = Math.min(w, h) * 0.4;
       const targetRadius = Math.max(250, Math.min(420, baseRadius)) + Math.min(speed * 3.2, 90);
-      sim.spotRadius += (targetRadius - sim.spotRadius) * 0.11;
+      sim.spotRadius += (targetRadius - sim.spotRadius) * smoothFactor(0.11);
 
       // Record subtle fading beam motion trail echoes when sweeping across the field
-      if (speed > 2.8 && nowMs - sim.lastTrailAt > 48) {
+      if (speed > 2.4 && nowMs - sim.lastTrailAt > 48) {
         sim.lastTrailAt = nowMs;
         sim.trail.push({
           x: sim.spotX - sim.spotVx * 2.2,
           y: sim.spotY - sim.spotVy * 2.2,
-          alpha: Math.min(0.85, speed / 22),
+          alpha: Math.min(0.85, speed / 18),
           r: sim.spotRadius * 0.72
         });
         if (sim.trail.length > 9) sim.trail.shift();
       }
+      const trailFade = Math.pow(0.91, dtScale);
+      const trailGrow = Math.pow(1.008, dtScale);
       for (const tp of sim.trail) {
-        tp.alpha *= 0.91;
-        tp.r *= 1.008;
+        tp.alpha *= trailFade;
+        tp.r *= trailGrow;
       }
       sim.trail = sim.trail.filter((tp) => tp.alpha > 0.02);
 
@@ -252,7 +302,7 @@ export default function App() {
       if (layer) {
         const maxViewportR = Math.hypot(w, h) * 1.15;
         const effectiveR = sim.spotRadius + (maxViewportR - sim.spotRadius) * sim.workLightMix;
-        const speedNorm = Math.min(speed / 24, 1);
+        const speedNorm = Math.min(speed / 20, 1);
 
         const flareX = sim.spotX + sim.spotVx * 4.5;
         const flareY = sim.spotY + sim.spotVy * 4.5;
@@ -325,59 +375,39 @@ export default function App() {
     return () => window.cancelAnimationFrame(rafId);
   }, []);
 
-  // Pointer drag panning + live spotlight cursor tracking
-  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (e.button !== 0 && e.pointerType === 'mouse') return;
-    const target = e.target as HTMLElement | null;
-    if (target?.closest('.hud-root, .index-drawer, .modal-backdrop')) return;
-
-    const sim = simRef.current;
-    sim.isDragging = true;
-    sim.dragMoved = false;
-    sim.glide = null;
-    sim.lastPointerX = e.clientX;
-    sim.lastPointerY = e.clientY;
-    sim.pointerX = e.clientX;
-    sim.pointerY = e.clientY;
-    sim.pointerActive = true;
-  };
-
+  // Passive mouse-position tracking for smooth 360° camera drift & follow-spot (no click-and-drag)
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType && e.pointerType !== 'mouse') return;
     const sim = simRef.current;
+    const target = e.target as HTMLElement | null;
+    const overChrome = Boolean(target?.closest('.hud-root, .index-drawer, .modal-backdrop'));
+
     sim.pointerX = e.clientX;
     sim.pointerY = e.clientY;
-    sim.pointerActive = true;
+    sim.pointerActive = !overChrome;
 
-    if (!sim.isDragging) return;
-    const dx = e.clientX - sim.lastPointerX;
-    const dy = e.clientY - sim.lastPointerY;
-    if (Math.hypot(dx, dy) > 4) sim.dragMoved = true;
-
-    sim.lastPointerX = e.clientX;
-    sim.lastPointerY = e.clientY;
-    // Drag moves the world directly under the hand
-    sim.camX = wrapCoord(sim.camX - dx, WORLD_WIDTH);
-    sim.camY = wrapCoord(sim.camY - dy, WORLD_HEIGHT);
-    sim.vx = -dx * 0.72;
-    sim.vy = -dy * 0.72;
+    if (sim.pointerRestAnchor) {
+      const movedDist = Math.hypot(
+        e.clientX - sim.pointerRestAnchor.x,
+        e.clientY - sim.pointerRestAnchor.y
+      );
+      if (movedDist > 28) {
+        sim.pointerRestAnchor = null;
+        sim.glide = null;
+      }
+    }
   };
 
-  const onPointerUp = () => {
-    const sim = simRef.current;
-    sim.isDragging = false;
-    window.setTimeout(() => {
-      sim.dragMoved = false;
-    }, 40);
+  const onPointerLeave = () => {
+    simRef.current.pointerActive = false;
   };
 
   return (
     <div
       ref={stageRef}
       className={`spatial-stage ${workLight ? 'is-work-light' : 'is-spotlight'}`}
-      onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
+      onPointerLeave={onPointerLeave}
     >
       <InkFilters />
 

@@ -27,6 +27,7 @@ body,
   margin: 0;
   padding: 0;
   overflow: hidden;
+  overscroll-behavior: none;
   background-color: #070706;
   color: var(--ink);
   font-family: var(--font-sans);
@@ -50,13 +51,8 @@ button {
   height: 100vh;
   overflow: hidden;
   user-select: none;
-  touch-action: none;
-  cursor: grab;
+  cursor: default;
   background: #070706;
-}
-
-.spatial-stage:active {
-  cursor: grabbing;
 }
 
 .stage-canvas {
